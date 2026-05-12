@@ -110,17 +110,33 @@ async def get_reviews(book_id: str):
 
 @router.post("/progress/{book_id}/init-modules")
 async def init_modules(book_id: str, body: InitModulesRequest):
+    from pydantic import ValidationError as PydanticValidationError
+
     from deeptutor.learning.models import KnowledgePoint, LearningModule
 
     service = get_learning_service()
     progress = service.get_or_create(book_id)
     modules = []
-    for m in body.modules:
+    for i, m in enumerate(body.modules):
         kps_data = m.get("knowledge_points", [])
-        kps = [KnowledgePoint(**kp) for kp in kps_data]
+        try:
+            kps = [KnowledgePoint(**kp) for kp in kps_data]
+        except PydanticValidationError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid knowledge_point data in modules[{i}]: {exc.errors()}",
+            ) from exc
         # Remove knowledge_points from m to avoid duplicate argument to LearningModule
         m_clean = {k: v for k, v in m.items() if k != "knowledge_points"}
-        modules.append(LearningModule(knowledge_points=kps, **m_clean))
+        try:
+            modules.append(LearningModule(knowledge_points=kps, **m_clean))
+        except PydanticValidationError as exc:
+            from fastapi import HTTPException
+            raise HTTPException(
+                status_code=422,
+                detail=f"Invalid module data in modules[{i}]: {exc.errors()}",
+            ) from exc
     service.init_modules(progress, modules)
     progress.current_module_id = modules[0].id if modules else ""
     progress.current_kp_index = 0
